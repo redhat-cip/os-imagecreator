@@ -1,0 +1,141 @@
+#!/bin/bash
+# Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
+#
+# Author: Pierre Rognant <pierre.rognant@enovance.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+usage() {
+    echo "Usage: $0 <qcow2_image_name>"
+    echo "Simply print YES if the image is updatable."
+    exit 1
+}
+
+# Check file
+AMI_NAME=$1
+if [ ! $AMI_NAME ]; then
+    echo "Missing image file. Leaving."
+    usage
+fi
+if [ ! -e $AMI_NAME ]; then
+    echo "Unable to find image ($AMI_NAME). Leaving."
+    usage
+fi
+INFO=`qemu-img info $AMI_NAME | grep "file format: qcow2"`
+if [ "x$INFO" == "x" ]; then
+    echo "Given file: $AMI_NAME, is either not a QCOW2 image
+or unreadable. Leaving."
+    usage
+fi
+
+
+# Find available NBD device
+FOUND_NBD="no"
+NBD_IDX="0"
+while [ $FOUND_NBD == "no" ]; do
+    DEV="/dev/nbd$NBD_IDX"
+    TEST=`ps aux | grep $DEV | grep -v grep`
+    if [ "x$TEST" == "x" ]; then
+        FOUND_NBD="true" 
+    else
+        NBD_IDX=$(($NBD_IDX + 1))       
+    fi
+    if [ $NBD_IDX == 8 ]; then
+        echo "Unable to find free NBD device..."
+        exit 1
+    fi
+done
+
+
+# Attach QCOW2 file image
+set -e
+modprobe nbd max_part=32
+qemu-nbd -c $DEV $AMI_NAME
+set +e
+
+
+# Find root device whithin partition
+MOUNT_DIR=`mktemp -d -t check-img.XXXXXX`
+## Find potential VG
+VGs=`pvs | grep $DEV | awk '{print $2}' | uniq`
+PARTS=""
+## Activate VG
+if [ "x$VGs" != "x" ]; then
+    # VGs found
+    for VG in $VGs; do
+        vgchange -a y $VG
+        # Find potential LV
+        for LV in `lvs | grep $VG | awk '{print $1}'`; do
+            PARTS="$PARTS /dev/$VG/$LV"
+        done
+    done
+fi
+## Search /etc
+for PART in ${DEV}p* $PARTS; do
+    FS=`file -sL $PART | grep -v swap` #ignore swap
+    if [ "x$FS" != "x" ]; then
+        # Standard FS
+        mount $PART $MOUNT_DIR
+        if [ -d "${MOUNT_DIR}/etc" ]; then
+            # root partition found
+            break
+        fi
+        umount $MOUNT_DIR
+    fi
+done
+
+
+clean_up () {
+    umount $MOUNT_DIR
+    rm -rf $MOUNT_DIR
+    if [ "x$VG" != "x" ]; then
+        for VG in $VGs; do
+            vgchange -a n $VG
+        done
+    fi
+    qemu-nbd -d $DEV
+}
+
+
+# Check if update available
+UPDATES="false"
+if [ -e "${MOUNT_DIR}/etc/redhat-release" ]; then
+    # Redhat based distro
+    mount -o bind /dev ${MOUNT_DIR}/dev 
+    if [ `chroot ${MOUNT_DIR} yum -q check-update|head -1` ]; then
+        UPDATES="true"
+    fi
+    umount ${MOUNT_DIR}/dev
+    clean_up
+elif [ -e "${MOUNT_DIR}/etc/debian_version" ]; then
+    # Debian based distro
+    chroot ${MOUNT_DIR} apt-get update 2> /dev/null 1> /dev/null
+    # may be change to only match security update
+    TEST=`chroot ${MOUNT_DIR} apt-get -s -o Debug::NoLocking=true upgrade | grep ^Inst | head -1`
+    if [ ! -z "$TEST" ]; then
+        UPDATES="true"
+    fi
+    clean_up
+else
+    echo "Unsupported distro."
+    clean_up
+    exit 1
+fi
+
+
+# Print result
+if [ $UPDATES == "true" ]; then
+    echo "YES"
+else
+    echo "NO"
+fi

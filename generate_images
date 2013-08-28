@@ -1,0 +1,100 @@
+#!/bin/bash
+# Copyright (C) 2013 eNovance SAS <licensing@enovance.com>
+#
+# Author: Pierre Rognant <pierre.rognant@enovance.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License. You may obtain
+# a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+# License for the specific language governing permissions and limitations
+# under the License.
+
+set -e
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+IMAGES_DIR="${DIR}/images"
+
+update_required () {
+    CURRENT_QCOW2=$1
+    if [ ! -e $CURRENT_QCOW2 ]; then
+        echo "YES"
+    else
+        RESULT=`${DIR}/test_update_needed $CURRENT_QCOW2`
+        if [ "x$RESULT" == "xNO" ]; then 
+            echo "NO"
+        else
+            echo "YES"
+        fi
+    fi
+}
+
+if [ ! -d "${IMAGES_DIR}" ]; then
+    echo "Images directory does not exist. Leaving."
+    exit 1
+fi
+
+# Tests if we have some images
+if [ -z "`ls ${IMAGES_DIR}`" ]; then
+    echo "No images found. Leaving."
+    exit 1
+fi  
+
+# Loop for each images
+IMAGES=`find ${IMAGES_DIR} -mindepth 1 -type d`
+for IMAGE in $IMAGES; do
+
+    NAME=`basename  ${IMAGE}`
+    if [ ! -e "${IMAGE}/CONFIG" ]; then
+        echo "No config found for ${IMAGE}. Skipping."  
+        continue
+    fi
+
+    source ${IMAGE}/CONFIG
+
+    if [ "x$ENABLED" != "x1" ]; then
+        echo "${IMAGE} disabled . Skipping."    
+        continue
+    fi
+
+    if [ "x$TYPE" == "xoz" ]; then
+        echo "TYPE=oz image"
+        if [ `update_required ${IMAGE}/${NAME}.qcow2` == "NO" ]; then
+            continue
+        fi 
+        CFG="${IMAGE}/${TPL}"
+        cd ${IMAGE}
+        chmod 0777 ${IMAGE}
+        /usr/bin/oz-install -p -u ${CFG} -x ${NAME}.xml -s ${IMAGE}/${NAME}.dsk
+        chmod 0755 ${IMAGE}
+        INFO=`qemu-img info ${IMAGE}/${NAME}.dsk | grep "file format: qcow2"`
+        # convert to qcow2
+        if [ -z $INFO ]; then
+            qemu-img convert -c -O qcow2 ${IMAGE}/${NAME}.dsk ${IMAGE}/${NAME}.qcow2
+        else
+            mv ${IMAGE}/${NAME}.dsk ${IMAGE}/${NAME}.qcow2
+        fi
+    elif [ "x$TYPE" == "xdebian" ]; then
+        if [ `update_required ${IMAGE}/${NAME}.qcow2` == "NO" ]; then
+            continue
+        fi 
+        echo "TYPE=debian image"
+        if [ -z $VERSION ]; then
+            VERSION="wheezy"
+        fi
+        cd ${IMAGE}
+        # purge existing qcow2
+        find ${IMAGE} -name "*.qcow2" -type f  -exec rm {} +
+        /usr/sbin/build-openstack-debian-image -r $VERSION
+        # rename qcow2
+        find ${IMAGE} -name "*.qcow2" -type f  -exec mv -f {} ${IMAGE}/${NAME}.qcow2 \;
+    else
+        echo "${IMAGE} unsupported. Skipping."  
+        continue
+    fi
+done

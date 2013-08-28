@@ -1,0 +1,36 @@
+<template>
+  <name>centos64</name>
+  <os>
+    <name>CentOS-6</name>
+    <version>4</version>
+    <arch>x86_64</arch>
+    <install type='url'>
+      <url>http://centos.mirror.iweb.ca/6.4/os/x86_64/</url>
+    </install>
+    <rootpw>plop</rootpw>
+  </os>
+  <description>CentOS 6.4 x86_64</description>
+  <repositories>
+    <repository name='epel-6'>
+      <url>http://download.fedoraproject.org/pub/epel/6/$basearch</url>
+      <signed>no</signed>
+    </repository>
+  </repositories>
+  <packages>
+    <package name='epel-release'/>
+    <package name='cloud-utils'/>
+    <package name='cloud-init'/>
+    <package name='yum-plugin-fastestmirror.noarch'/>
+  </packages>
+  <commands>
+    <command name='update'>
+yum update
+yum clean all
+adduser -c "Cloud-init user" admin
+sed -i 's/^user:.*/user: admin/g' /etc/cloud/cloud.cfg
+sed -i '/^HWADDR/d' /etc/sysconfig/network-scripts/ifcfg-eth0
+echo -n > /etc/udev/rules.d/70-persistent-net.rules
+echo -n > /lib/udev/rules.d/75-persistent-net-generator.rules
+    </command>
+  </commands>
+</template>
