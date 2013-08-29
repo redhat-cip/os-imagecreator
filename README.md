@@ -17,6 +17,7 @@ Planned features:
 ## Requirements
 
 * Debian jessie (may work on debian wheezy) with:
+
 ```
 apt-get install -y openstack-debian-images git dpkg-dev debhelper python-all libvirt-bin supermin
 apt-get install -y libguestfs-tools
@@ -25,6 +26,7 @@ and/or
 apt-get -y install qemu
 ```
 * Working oz and dependencies (https://github.com/clalancette/oz)
+
 ```
 git clone https://github.com/clalancette/oz.git
 cd oz
@@ -37,10 +39,12 @@ apt-get install -f -y
 ### Quickstart
 * Check requirements
 * Git clone
+
 ```
 git clone https://github.com/enovance/os-imagecreator.git
 ```
 * Fire up
+
 ```
 cd os-imagecreator
 ./generate_images
